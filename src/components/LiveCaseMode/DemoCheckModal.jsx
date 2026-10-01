@@ -16,12 +16,14 @@ import {
   Sparkles,
   ShieldCheck
 } from 'lucide-react';
-import { GeminiLiveSession, hasGeminiKey } from '../../services/geminiLiveService';
+import { GeminiLiveSession, hasGeminiKey, speakCallerVoice, stopCallerVoice } from '../../services/geminiLiveService';
 import { sounds } from '../../utils/soundEffects';
 
 export const DemoCheckModal = ({ isOpen, onClose }) => {
   const [isRunning, setIsRunning] = useState(false);
   const [results, setResults] = useState(null);
+  const [isTestingVoice, setIsTestingVoice] = useState(false);
+  const [isVoiceVerified, setIsVoiceVerified] = useState(false);
 
   const runDiagnostics = async () => {
     setIsRunning(true);
@@ -32,6 +34,35 @@ export const DemoCheckModal = ({ isOpen, onClose }) => {
     if (res.micPermission && res.audioOutput) {
       sounds.playSuccess();
     }
+  };
+
+  const handleTestCallerVoice = () => {
+    if (isTestingVoice) {
+      stopCallerVoice();
+      setIsTestingVoice(false);
+      return;
+    }
+
+    sounds.init();
+    sounds.playPhonePickup();
+    setIsTestingVoice(true);
+
+    const testPhrase = 'Testing LawLink caller voice. Audio output and speech synthesizer are fully operational and verified.';
+    speakCallerVoice(testPhrase, {
+      language: 'en',
+      voice: 'Fenrir',
+      onStart: () => setIsTestingVoice(true),
+      onEnd: () => {
+        setIsTestingVoice(false);
+        setIsVoiceVerified(true);
+        sounds.playEvidenceTick();
+      }
+    });
+  };
+
+  const handleVerifyAll = async () => {
+    await runDiagnostics();
+    handleTestCallerVoice();
   };
 
   useEffect(() => {
@@ -148,7 +179,7 @@ export const DemoCheckModal = ({ isOpen, onClose }) => {
             </div>
           </div>
 
-          {/* 2. Web Audio Synthesizer */}
+          {/* 2. Web Audio & Caller Voice Synthesizer */}
           <div style={{
             display: 'flex',
             alignItems: 'center',
@@ -156,36 +187,48 @@ export const DemoCheckModal = ({ isOpen, onClose }) => {
             padding: '0.85rem 1rem',
             background: '#f8fafc',
             borderRadius: '14px',
-            border: '1px solid #e2e8f0'
+            border: isTestingVoice ? '2px solid #6366f1' : isVoiceVerified ? '1px solid #a7f3d0' : '1px solid #e2e8f0',
+            transition: 'all 0.3s ease'
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <Volume2 size={20} color="#06b6d4" />
+              <Volume2 size={20} color={isTestingVoice ? '#4f46e5' : '#06b6d4'} className={isTestingVoice ? 'animate-pulse' : ''} />
               <div>
-                <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#0f172a' }}>
-                  Web Audio Output (24kHz PCM)
+                <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  Caller Voice & Audio Output
+                  {isVoiceVerified && (
+                    <span style={{ fontSize: '0.7rem', color: '#059669', background: '#d1fae5', padding: '0.1rem 0.4rem', borderRadius: '4px' }}>
+                      Verified ✓
+                    </span>
+                  )}
                 </div>
                 <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                  Crystal clear NPC playback and sound effects
+                  {results?.voiceEngine || 'Resilient Dual Engine (SpeechSynthesis + Procedural WebAudio)'}
+                  {results?.voiceCount ? ` • ${results.voiceCount} browser voices` : ''}
                 </div>
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <button
-                onClick={() => { sounds.playSuccess(); }}
+                onClick={handleTestCallerVoice}
                 style={{
-                  fontSize: '0.75rem',
-                  fontWeight: 600,
-                  color: '#4f46e5',
-                  background: 'rgba(99, 102, 241, 0.1)',
-                  border: '1px solid rgba(99, 102, 241, 0.25)',
-                  borderRadius: '6px',
-                  padding: '0.2rem 0.5rem',
-                  cursor: 'pointer'
+                  fontSize: '0.78rem',
+                  fontWeight: 700,
+                  color: isTestingVoice ? '#ffffff' : '#4338ca',
+                  background: isTestingVoice ? '#4f46e5' : 'rgba(99, 102, 241, 0.12)',
+                  border: isTestingVoice ? 'none' : '1px solid rgba(99, 102, 241, 0.3)',
+                  borderRadius: '8px',
+                  padding: '0.35rem 0.75rem',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  boxShadow: isTestingVoice ? '0 0 12px rgba(99, 102, 241, 0.5)' : 'none'
                 }}
               >
-                Test Sound
+                <Volume2 size={14} />
+                {isTestingVoice ? 'Speaking...' : '🔊 Test Voice'}
               </button>
-              {results?.audioOutput ? (
+              {isVoiceVerified || results?.audioOutput ? (
                 <CheckCircle2 size={18} color="#10b981" />
               ) : (
                 <AlertCircle size={18} color="#f59e0b" />
@@ -279,38 +322,60 @@ export const DemoCheckModal = ({ isOpen, onClose }) => {
         </div>
 
         {/* Action Buttons */}
-        <div style={{ display: 'flex', gap: '0.75rem' }}>
+        <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
+          <button
+            onClick={handleVerifyAll}
+            disabled={isRunning || isTestingVoice}
+            style={{
+              flex: 1,
+              minWidth: '130px',
+              padding: '0.75rem',
+              borderRadius: '12px',
+              border: '1px solid #6366f1',
+              background: '#eef2ff',
+              color: '#4338ca',
+              fontWeight: 800,
+              fontSize: '0.85rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.4rem',
+              cursor: 'pointer'
+            }}
+          >
+            <Sparkles size={16} /> {isTestingVoice ? 'Verifying...' : '⚡ Verify All'}
+          </button>
           <button
             onClick={runDiagnostics}
             disabled={isRunning}
             style={{
-              flex: 1,
-              padding: '0.75rem',
+              padding: '0.75rem 1rem',
               borderRadius: '12px',
               border: '1px solid #cbd5e1',
               background: '#ffffff',
               color: '#334155',
               fontWeight: 700,
-              fontSize: '0.875rem',
+              fontSize: '0.85rem',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: '0.5rem',
+              gap: '0.4rem',
               cursor: 'pointer'
             }}
           >
-            <RotateCcw size={16} /> Re-run Check
+            <RotateCcw size={15} /> Re-check
           </button>
           <button
             onClick={onClose}
             style={{
-              flex: 2,
+              flex: 1.5,
+              minWidth: '150px',
               padding: '0.75rem',
               borderRadius: '12px',
               border: 'none',
               background: 'linear-gradient(135deg, #4f46e5 0%, #06b6d4 100%)',
               color: '#ffffff',
-              fontWeight: 700,
+              fontWeight: 800,
               fontSize: '0.875rem',
               display: 'flex',
               alignItems: 'center',
@@ -320,7 +385,7 @@ export const DemoCheckModal = ({ isOpen, onClose }) => {
               boxShadow: '0 4px 14px rgba(79, 70, 229, 0.3)'
             }}
           >
-            <Play size={16} /> Ready to Present
+            <Play size={16} /> Ready to Play
           </button>
         </div>
       </div>

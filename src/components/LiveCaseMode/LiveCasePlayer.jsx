@@ -27,7 +27,7 @@ import {
   Info
 } from 'lucide-react';
 import { AudioVisualizerOrb } from './AudioVisualizerOrb';
-import { GeminiLiveSession } from '../../services/geminiLiveService';
+import { GeminiLiveSession, speakCallerVoice, stopCallerVoice } from '../../services/geminiLiveService';
 import { useGamification } from '../../context/GamificationContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { sounds } from '../../utils/soundEffects';
@@ -60,6 +60,80 @@ export const LiveCasePlayer = ({ caseFile, onBack, onOpenMapWithCategory }) => {
   const lastUserActivityTime = useRef(Date.now());
   const transcriptEndRef = useRef(null);
   const ringIntervalRef = useRef(null);
+
+  // Manually replay caller dialogue out loud
+  const handleReplayCallerVoice = (customText) => {
+    let textToSpeak = customText;
+    if (!textToSpeak) {
+      // Find latest NPC speech in transcript, or fallback to openingLine
+      const lastNpc = [...transcript].reverse().find(t => t.role === 'npc');
+      textToSpeak = lastNpc ? lastNpc.text : caseFile.npcPersona.openingLine;
+    }
+
+    if (!textToSpeak) return;
+
+    sounds.init();
+    setIsNpcSpeaking(true);
+    speakCallerVoice(textToSpeak, {
+      language,
+      voice: caseFile.voice,
+      onStart: () => setIsNpcSpeaking(true),
+      onEnd: () => setIsNpcSpeaking(false)
+    });
+  };
+
+  // Quick legal argument click responder
+  const handleQuickResponse = (userText) => {
+    sounds.playOptionSelect();
+    lastUserActivityTime.current = Date.now();
+    setCoachWhisper(null);
+    if (liveSessionRef.current) {
+      liveSessionRef.current.sendUserText(userText);
+    }
+  };
+
+  // Dynamic quick response options for each phase
+  const getQuickResponsesForCurrentPhase = () => {
+    if (caseFile.id === 'case_fake_bank_call') {
+      if (currentPhaseIndex === 0) {
+        return [
+          { icon: '🛡️', text: 'I did NOT authorize this transaction. Cancel it immediately.' },
+          { icon: '🔒', text: 'I will never share my OTP. Banks never ask for OTP.' },
+          { icon: '🏛️', text: 'I will visit my local bank branch to resolve this in person.' }
+        ];
+      } else if (currentPhaseIndex === 1) {
+        return [
+          { icon: '🚫', text: 'Sharing OTP is prohibited by RBI. I will not read the code.' },
+          { icon: '🚨', text: 'I am reporting this fraudulent call to 1930 Cyber Crime Helpline.' },
+          { icon: '⚖️', text: 'Under RBI Zero Liability, customer has no loss if reported quickly.' }
+        ];
+      } else {
+        return [
+          { icon: '📞', text: 'I am lodging an official complaint at cybercrime.gov.in and helpline 1930.' },
+          { icon: '🏦', text: 'I am locking my card through official net banking portal right now.' },
+          { icon: '🛑', text: 'Impersonating a bank official is a criminal offense under BNS.' }
+        ];
+      }
+    } else if (caseFile.id === 'case_consumer_refund') {
+      return [
+        { icon: '⚖️', text: 'Under Consumer Protection Act 2019, a defective item must be refunded.' },
+        { icon: '📦', text: 'Store return policy cannot override statutory consumer rights.' },
+        { icon: '🏛️', text: 'I will file a grievance on the National Consumer Helpline 1915.' }
+      ];
+    } else {
+      const unticked = caseFile.evidenceItems.filter(e => !tickedEvidenceIds.includes(e.id));
+      if (unticked.length > 0) {
+        return unticked.slice(0, 3).map((item, idx) => ({
+          icon: idx === 0 ? '⚖️' : idx === 1 ? '🛡️' : '📜',
+          text: `I invoke my rights regarding ${item.label.toLowerCase()}.`
+        }));
+      }
+      return [
+        { icon: '⚖️', text: 'I know my statutory rights under Indian law.' },
+        { icon: '🛡️', text: 'Please follow official legal procedure.' }
+      ];
+    }
+  };
 
   // Incoming Call Ringing Sound Effect
   useEffect(() => {
@@ -130,6 +204,15 @@ export const LiveCasePlayer = ({ caseFile, onBack, onOpenMapWithCategory }) => {
   // Answer Incoming Call
   const handleAnswerCall = async () => {
     if (ringIntervalRef.current) clearInterval(ringIntervalRef.current);
+    
+    // Unlock and prime browser speech synthesis & Web Audio in synchronous user click
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      try {
+        window.speechSynthesis.resume();
+      } catch (e) {}
+    }
+    sounds.init();
+    sounds.playPhonePickup();
     sounds.playClick();
     setCallState('active');
     sounds.playTensionDrone();
@@ -219,6 +302,7 @@ export const LiveCasePlayer = ({ caseFile, onBack, onOpenMapWithCategory }) => {
   const handleHangUp = () => {
     sounds.playClick();
     sounds.stopTensionDrone();
+    stopCallerVoice();
     if (liveSessionRef.current) {
       liveSessionRef.current.destroy();
     }
@@ -233,6 +317,7 @@ export const LiveCasePlayer = ({ caseFile, onBack, onOpenMapWithCategory }) => {
   // End Case Resolution
   const handleEndCase = async (outcome, summary) => {
     sounds.stopTensionDrone();
+    stopCallerVoice();
     if (liveSessionRef.current) {
       liveSessionRef.current.destroy();
     }
@@ -751,6 +836,34 @@ export const LiveCasePlayer = ({ caseFile, onBack, onOpenMapWithCategory }) => {
                 size={140}
               />
 
+              {/* Replay Caller Voice Out Loud */}
+              <button
+                onClick={() => handleReplayCallerVoice()}
+                style={{
+                  position: 'absolute',
+                  top: '12px',
+                  right: '12px',
+                  background: isNpcSpeaking ? 'rgba(79, 70, 229, 0.45)' : 'rgba(255, 255, 255, 0.12)',
+                  backdropFilter: 'blur(8px)',
+                  border: isNpcSpeaking ? '1px solid #818cf8' : '1px solid rgba(255, 255, 255, 0.25)',
+                  color: '#ffffff',
+                  padding: '0.4rem 0.85rem',
+                  borderRadius: '999px',
+                  fontSize: '0.78rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.4rem',
+                  transition: 'all 0.2s ease',
+                  boxShadow: isNpcSpeaking ? '0 0 15px rgba(99, 102, 241, 0.5)' : 'none'
+                }}
+                title="Hear Caller Voice Aloud"
+              >
+                <Volume2 size={15} color={isNpcSpeaking ? '#4ade80' : '#38bdf8'} />
+                {isNpcSpeaking ? 'Speaking...' : '🔊 Hear Caller Voice'}
+              </button>
+
               {/* Coach Whisper Nudge */}
               {coachWhisper && (
                 <div style={{
@@ -775,7 +888,7 @@ export const LiveCasePlayer = ({ caseFile, onBack, onOpenMapWithCategory }) => {
               flex: 1,
               padding: '1.25rem',
               overflowY: 'auto',
-              maxHeight: '380px',
+              maxHeight: '340px',
               background: '#f8fafc',
               display: 'flex',
               flexDirection: 'column',
@@ -817,12 +930,81 @@ export const LiveCasePlayer = ({ caseFile, onBack, onOpenMapWithCategory }) => {
                       renderHighlightedTranscriptText(item.text)
                     )}
                   </div>
-                  <span style={{ fontSize: '0.65rem', color: '#94a3b8', marginTop: '2px' }}>
-                    {item.role === 'user' ? 'You' : caseFile.npcPersona.name} • {item.timestamp}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', marginTop: '2px' }}>
+                    <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
+                      {item.role === 'user' ? 'You' : caseFile.npcPersona.name} • {item.timestamp}
+                    </span>
+                    {item.role === 'npc' && (
+                      <button
+                        onClick={() => handleReplayCallerVoice(item.text)}
+                        style={{
+                          background: 'rgba(99, 102, 241, 0.08)',
+                          border: '1px solid rgba(99, 102, 241, 0.2)',
+                          borderRadius: '6px',
+                          color: '#4f46e5',
+                          fontSize: '0.68rem',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.2rem',
+                          padding: '0.1rem 0.4rem'
+                        }}
+                        title="Listen to this line again"
+                      >
+                        <Volume2 size={11} /> Listen
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
               <div ref={transcriptEndRef} />
+            </div>
+
+            {/* Quick Legal Counter-Arguments Panel */}
+            <div style={{
+              padding: '0.75rem 1.25rem',
+              background: '#f1f5f9',
+              borderTop: '1px solid #e2e8f0',
+              borderBottom: '1px solid #e2e8f0',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.45rem'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                  <Zap size={13} color="#6366f1" /> Quick Response (Tap to answer):
+                </span>
+                <span style={{ fontSize: '0.7rem', color: '#64748b' }}>
+                  Or speak naturally into your mic 🎙️
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+                {getQuickResponsesForCurrentPhase().map((phrase, pIdx) => (
+                  <button
+                    key={pIdx}
+                    onClick={() => handleQuickResponse(phrase.text)}
+                    style={{
+                      background: '#ffffff',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '8px',
+                      padding: '0.35rem 0.65rem',
+                      fontSize: '0.775rem',
+                      fontWeight: 600,
+                      color: '#1e293b',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.35rem',
+                      transition: 'all 0.15s ease',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.04)'
+                    }}
+                  >
+                    <span>{phrase.icon}</span>
+                    <span>{phrase.text}</span>
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Hint & Helpline Floating Cards */}

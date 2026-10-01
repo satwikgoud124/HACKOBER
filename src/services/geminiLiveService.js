@@ -4,6 +4,7 @@
 // function calling game-state driver, barge-in / VAD, and bulletproof fallback.
 
 import { GoogleGenAI } from '@google/genai';
+import { sounds } from '../utils/soundEffects';
 
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
 export const hasGeminiKey = Boolean(
@@ -11,6 +12,151 @@ export const hasGeminiKey = Boolean(
   GEMINI_API_KEY.length > 10 && 
   !GEMINI_API_KEY.includes('YOUR_')
 );
+
+/**
+ * Voice selection engine: matches best available system/browser voice
+ * prioritizing Indian English, conversational English, or user language.
+ */
+export function getBestSpeechVoice(lang = 'en', voiceName = '') {
+  if (typeof window === 'undefined' || !window.speechSynthesis) return null;
+  const voices = window.speechSynthesis.getVoices() || [];
+  if (voices.length === 0) return null;
+
+  const targetLang = (lang || 'en').toLowerCase();
+  const targetPrefix = targetLang === 'hi' ? 'hi' : targetLang === 'te' ? 'te' : 'en';
+
+  // 1. Check for specific Indian English accents (e.g. en-IN)
+  let matched = voices.find(v => v.lang && v.lang.toLowerCase().replace('_', '-').startsWith(`${targetPrefix}-in`));
+  if (matched) return matched;
+
+  // 2. Check for requested language prefix (e.g. en, hi, te)
+  matched = voices.find(v => v.lang && v.lang.toLowerCase().startsWith(targetPrefix));
+  if (matched) return matched;
+
+  // 3. Fallback to any English voice
+  matched = voices.find(v => v.lang && v.lang.toLowerCase().startsWith('en'));
+  if (matched) return matched;
+
+  // 4. Default voice
+  return voices.find(v => v.default) || voices[0] || null;
+}
+
+/**
+ * Stop any currently active caller voice synthesis
+ */
+export function stopCallerVoice() {
+  if (typeof window !== 'undefined' && window.speechSynthesis) {
+    try {
+      window.speechSynthesis.cancel();
+    } catch (e) {}
+  }
+  window._lawlinkActiveUtterance = null;
+}
+
+/**
+ * Ultra-robust dual voice synthesizer:
+ * 1. Web SpeechSynthesis with Chrome/Windows GC and pause bug workarounds
+ * 2. Automatic watchdog: seamlessly falls back to Web Audio procedural voice if TTS fails or times out
+ */
+export function speakCallerVoice(text, options = {}) {
+  if (!text || typeof window === 'undefined') return;
+
+  const lang = options.language || 'en';
+  const voiceName = options.voice || 'Kore';
+  const onStart = options.onStart || (() => {});
+  const onEnd = options.onEnd || (() => {});
+
+  // Pre-initialize Web Audio context
+  sounds.init();
+
+  if (!window.speechSynthesis) {
+    // Zero TTS available on system, play procedural acoustic voice
+    sounds.speakProceduralVoice(text, { voice: voiceName });
+    onStart();
+    setTimeout(onEnd, Math.min(4000, Math.max(1200, text.split(' ').length * 150)));
+    return;
+  }
+
+  try {
+    // Unpause speech synthesis (fixes Chrome Windows background pause)
+    if (window.speechSynthesis.paused) {
+      window.speechSynthesis.resume();
+    }
+
+    // Cancel existing utterance with tiny debounce to avoid Chrome race-condition cancellation
+    window.speechSynthesis.cancel();
+
+    setTimeout(() => {
+      try {
+        if (window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
+        }
+
+        const utterance = new SpeechSynthesisUtterance(text);
+        const voice = getBestSpeechVoice(lang, voiceName);
+        if (voice) {
+          utterance.voice = voice;
+        }
+        utterance.lang = voice?.lang || (lang === 'hi' ? 'hi-IN' : lang === 'te' ? 'te-IN' : 'en-IN');
+        utterance.rate = 1.02;
+        utterance.pitch = voiceName === 'Fenrir' ? 0.88 : voiceName === 'Puck' ? 1.15 : 1.0;
+
+        let started = false;
+        let ended = false;
+
+        utterance.onstart = () => {
+          started = true;
+          onStart();
+        };
+
+        utterance.onend = () => {
+          ended = true;
+          onEnd();
+          window._lawlinkActiveUtterance = null;
+        };
+
+        utterance.onerror = (err) => {
+          console.warn('SpeechSynthesis error, switching to procedural voice fallback:', err);
+          if (!ended) {
+            ended = true;
+            onEnd();
+            sounds.speakProceduralVoice(text, { voice: voiceName });
+          }
+          window._lawlinkActiveUtterance = null;
+        };
+
+        // CRITICAL FIX FOR CHROME / WINDOWS:
+        // Store utterance on window object to prevent V8 garbage collector from stopping audio mid-sentence
+        window._lawlinkActiveUtterance = utterance;
+
+        window.speechSynthesis.speak(utterance);
+
+        // Fallback watchdog: If SpeechSynthesis hasn't started speaking within 750ms,
+        // trigger the procedural acoustic formant voice so the user NEVER experiences silence!
+        setTimeout(() => {
+          if (!started && !ended) {
+            console.log('Voice watchdog: triggering procedural acoustic voice fallback');
+            sounds.speakProceduralVoice(text, { voice: voiceName });
+            onStart();
+            setTimeout(onEnd, Math.min(3500, Math.max(1200, text.split(' ').length * 150)));
+          }
+        }, 750);
+
+      } catch (innerErr) {
+        console.warn('Inner SpeechSynthesis error:', innerErr);
+        sounds.speakProceduralVoice(text, { voice: voiceName });
+        onStart();
+        setTimeout(onEnd, 2000);
+      }
+    }, 45);
+
+  } catch (err) {
+    console.warn('Outer speakCallerVoice error:', err);
+    sounds.speakProceduralVoice(text, { voice: voiceName });
+    onStart();
+    setTimeout(onEnd, 2000);
+  }
+}
 
 // Convert Float32Array from Web Audio to 16-bit PCM ArrayBuffer
 function floatTo16BitPCM(float32Array) {
@@ -128,7 +274,7 @@ export class GeminiLiveSession {
       results.details.micError = err.message;
     }
 
-    // 2. Check Audio Output
+    // 2. Check Audio Output & Voice Synthesizers
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       if (AudioCtx) {
@@ -139,6 +285,12 @@ export class GeminiLiveSession {
         results.audioOutput = true;
         await testCtx.close();
       }
+
+      // Check SpeechSynthesis browser voices
+      const voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+      results.voiceCount = voices.length;
+      results.hasSpeechSynthesis = Boolean(window.speechSynthesis);
+      results.voiceEngine = voices.length > 0 ? 'SpeechSynthesis + Procedural WebAudio' : 'Procedural WebAudio Synthesizer';
     } catch (err) {
       results.details.audioError = err.message;
     }
@@ -277,6 +429,25 @@ Start immediately by saying your exact opening line:
 
         // Send initial setup message
         this.sendSetupMessage();
+
+        // Prompt Gemini Live model to immediately speak the opening line of the case
+        setTimeout(() => {
+          if (this.isConnected && this.ws && this.ws.readyState === WebSocket.OPEN) {
+            const initialTurn = {
+              clientContent: {
+                turns: [
+                  {
+                    role: 'user',
+                    parts: [{ text: `The phone call has connected. Speak your character opening line out loud right now with urgency: "${this.caseFile.npcPersona.openingLine}"` }]
+                  }
+                ],
+                turnComplete: true
+              }
+            };
+            this.ws.send(JSON.stringify(initialTurn));
+          }
+        }, 500);
+
         resolve();
       };
 
@@ -680,6 +851,37 @@ Start immediately by saying your exact opening line:
     this.onNpcSpeakingChange(false);
   }
 
+  // Send user text response (works seamlessly for both Live WebSocket and Fallback mode)
+  async sendUserText(userText) {
+    if (!userText || !userText.trim() || this.isDestroyed) return;
+    const text = userText.trim();
+    this.onTranscript({ role: 'user', text });
+
+    if (this.isConnected && this.ws && this.ws.readyState === WebSocket.OPEN && !this.isFallbackActive) {
+      try {
+        const clientMsg = {
+          clientContent: {
+            turns: [
+              {
+                role: 'user',
+                parts: [{ text }]
+              }
+            ],
+            turnComplete: true
+          }
+        };
+        this.ws.send(JSON.stringify(clientMsg));
+        this.checkClientEvidenceHeuristics(text);
+        return;
+      } catch (err) {
+        console.warn('Error sending user text over live WS:', err);
+      }
+    }
+
+    // Process via Fallback engine
+    await this.processUserSpeechInFallback(text);
+  }
+
   // ────────────────────────────────────────────────────────────────
   // BULLETPROOF FALLBACK ENGINE (Guarantees zero dead screen)
   // Uses Web Speech Recognition + Gemini Text API / Heuristics + SpeechSynthesis
@@ -688,10 +890,14 @@ Start immediately by saying your exact opening line:
     this.isFallbackActive = true;
     this.onStatusChange({ status: 'connected', mode: 'fallback' });
 
-    // Speak initial opening line
+    // Speak initial opening line after phone pickup sound completes
     const opening = this.caseFile.npcPersona.openingLine;
     this.onTranscript({ role: 'npc', text: opening });
-    this.speakWithSynthesis(opening);
+    setTimeout(() => {
+      if (!this.isDestroyed) {
+        this.speakWithSynthesis(opening);
+      }
+    }, 320);
 
     // Setup Web Speech Recognition if available
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -805,27 +1011,22 @@ Return JSON: { "reply": "...", "composureDelta": 0, "legalDelta": 0, "tickEviden
     this.speakWithSynthesis(npcReply);
   }
 
-  // Voice output using Web SpeechSynthesis
+  // Voice output using resilient dual voice engine (SpeechSynthesis + Procedural WebAudio)
   speakWithSynthesis(text) {
-    if (!this.speechSynth) return;
-    this.speechSynth.cancel();
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = this.language === 'hi' ? 'hi-IN' : this.language === 'te' ? 'te-IN' : 'en-IN';
-    utterance.rate = 1.05;
-    utterance.pitch = this.caseFile.voice === 'Fenrir' ? 0.85 : this.caseFile.voice === 'Puck' ? 1.15 : 1.0;
-
-    utterance.onstart = () => this.onNpcSpeakingChange(true);
-    utterance.onend = () => this.onNpcSpeakingChange(false);
-    utterance.onerror = () => this.onNpcSpeakingChange(false);
-
-    this.speechSynth.speak(utterance);
+    speakCallerVoice(text, {
+      language: this.language,
+      voice: this.caseFile.voice,
+      onStart: () => this.onNpcSpeakingChange(true),
+      onEnd: () => this.onNpcSpeakingChange(false)
+    });
   }
 
   // Clean up all resources, sockets, and audio streams
   destroy() {
     this.isDestroyed = true;
     this.isConnected = false;
+
+    stopCallerVoice();
 
     if (this.ws) {
       try { this.ws.close(); } catch (e) {}

@@ -234,6 +234,93 @@ class SoundManager {
     } catch (e) {}
   }
 
+  playPhonePickup() {
+    if (!this.enabled) return;
+    try {
+      this.init();
+      if (!this.ctx) return;
+      const now = this.ctx.currentTime;
+      [0, 0.04].forEach((offset) => {
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(600, now + offset);
+        osc.frequency.exponentialRampToValueAtTime(150, now + offset + 0.03);
+        gain.gain.setValueAtTime(0.08, now + offset);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.03);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now + offset);
+        osc.stop(now + offset + 0.03);
+      });
+    } catch (e) {}
+  }
+
+  // Realistic Web Audio Acoustic Voice Synthesizer
+  // Formant vocal resonance with telephone bandpass filtering (300-3400Hz)
+  speakProceduralVoice(text, options = {}) {
+    if (!this.enabled) return;
+    try {
+      this.init();
+      if (!this.ctx) return;
+
+      const words = (text || '').trim().split(/\s+/).slice(0, 18);
+      if (words.length === 0) return;
+
+      const baseFreq = options.voice === 'Fenrir' ? 125 : options.voice === 'Puck' ? 185 : 155;
+      const startTime = this.ctx.currentTime + 0.05;
+
+      // Telephone bandpass filter (telecom standard 300Hz - 3400Hz)
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(1200, startTime);
+      filter.Q.setValueAtTime(0.8, startTime);
+
+      const masterGain = this.ctx.createGain();
+      masterGain.gain.setValueAtTime(0.07, startTime);
+
+      filter.connect(masterGain);
+      masterGain.connect(this.ctx.destination);
+
+      let wordTime = startTime;
+      words.forEach((word, idx) => {
+        const cleanWord = word.replace(/[^a-zA-Z0-9]/g, '');
+        const duration = Math.min(0.24, Math.max(0.12, cleanWord.length * 0.035));
+        const pause = 0.04;
+
+        const osc = this.ctx.createOscillator();
+        const wordGain = this.ctx.createGain();
+
+        osc.type = 'sawtooth';
+        const pitchBend = (idx % 3 === 0 ? 1.05 : idx % 2 === 0 ? 0.95 : 1.0) * (idx === words.length - 1 ? 0.88 : 1.0);
+        osc.frequency.setValueAtTime(baseFreq * pitchBend, wordTime);
+        osc.frequency.exponentialRampToValueAtTime(baseFreq * pitchBend * 0.96, wordTime + duration);
+
+        wordGain.gain.setValueAtTime(0.001, wordTime);
+        wordGain.gain.linearRampToValueAtTime(0.08, wordTime + 0.02);
+        wordGain.gain.exponentialRampToValueAtTime(0.001, wordTime + duration);
+
+        osc.connect(wordGain);
+        wordGain.connect(filter);
+
+        osc.start(wordTime);
+        osc.stop(wordTime + duration);
+
+        wordTime += duration + pause;
+      });
+
+      setTimeout(() => {
+        try {
+          filter.disconnect();
+          masterGain.disconnect();
+        } catch(e) {}
+      }, (wordTime - startTime + 0.5) * 1000);
+
+    } catch (e) {
+      console.warn('speakProceduralVoice error:', e);
+    }
+  }
+
   stopTensionDrone() {
     try {
       if (this.droneGain && this.ctx) {
