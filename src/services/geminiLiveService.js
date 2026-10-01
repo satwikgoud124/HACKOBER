@@ -116,7 +116,13 @@ export function speakCallerVoice(text, options = {}) {
         };
 
         utterance.onerror = (err) => {
-          console.warn('SpeechSynthesis error, switching to procedural voice fallback:', err);
+          if (err?.error === 'interrupted' || err?.error === 'canceled') {
+            ended = true;
+            onEnd();
+            window._lawlinkActiveUtterance = null;
+            return;
+          }
+          console.warn('SpeechSynthesis error, switching to procedural voice fallback:', err?.error || err);
           if (!ended) {
             ended = true;
             onEnd();
