@@ -4,6 +4,7 @@ import {
   ChevronDown, RefreshCw, Phone, Mic, MicOff
 } from 'lucide-react';
 import { askLawLinkGuide } from '../services/geminiService';
+import { LegalHelpPanel } from './LegalHelpPanel';
 
 const QUICK_CHIPS = [
   { label: '💰 UPI Fraud', query: 'I received a fake UPI payment request and lost money' },
@@ -57,6 +58,7 @@ export const FloatingChatBot = () => {
   const [isListening, setIsListening] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(false);
   const [voiceError, setVoiceError] = useState('');
+  const [showLegalHelp, setShowLegalHelp] = useState(false);
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
   const recognitionRef = useRef(null);
@@ -208,8 +210,8 @@ export const FloatingChatBot = () => {
       {isOpen && (
         <div style={{
           position: 'fixed', bottom: 158, right: 24,
-          width: 'min(380px, calc(100vw - 32px))',
-          height: 'min(570px, calc(100vh - 180px))',
+          width: 'min(415px, calc(100vw - 28px))',
+          height: 'min(580px, calc(100vh - 170px))',
           background: '#fff', borderRadius: 20,
           boxShadow: '0 20px 60px rgba(0,0,0,0.16),0 8px 24px rgba(99,102,241,0.12)',
           border: '1.5px solid rgba(99,102,241,0.15)',
@@ -219,26 +221,70 @@ export const FloatingChatBot = () => {
         }}>
 
           {/* Header */}
-          <div style={{ background:'linear-gradient(135deg,#4f46e5,#6366f1)', padding:'0.85rem 1rem', display:'flex', alignItems:'center', gap:'0.6rem' }}>
-            <div style={{ width:38,height:38,borderRadius:'50%',background:'rgba(255,255,255,0.2)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0 }}>
-              <Bot size={22} color="white" />
+          <div style={{ background:'linear-gradient(135deg,#4f46e5,#6366f1)', padding:'0.75rem 0.85rem', display:'flex', alignItems:'center', gap:'0.45rem' }}>
+            <div style={{ width:34,height:34,borderRadius:'50%',background:'rgba(255,255,255,0.2)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0 }}>
+              <Bot size={20} color="white" />
             </div>
-            <div style={{ flex:1 }}>
-              <div style={{ fontWeight:800,fontSize:'0.95rem',color:'#fff',lineHeight:1 }}>LawBot</div>
-              <div style={{ fontSize:'0.68rem',color:'rgba(255,255,255,0.75)',marginTop:2,display:'flex',alignItems:'center',gap:4 }}>
+            <div style={{ flex:1, minWidth: 0 }}>
+              <div style={{ fontWeight:800,fontSize:'0.92rem',color:'#fff',lineHeight:1.1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>LawBot</div>
+              <div style={{ fontSize:'0.64rem',color:'rgba(255,255,255,0.8)',marginTop:2,display:'flex',alignItems:'center',gap:4 }}>
                 <span style={{ width:6,height:6,borderRadius:'50%',background:'#4ade80',display:'inline-block' }} />
-                Gemini AI · Always available
+                Gemini AI · Available
               </div>
             </div>
-            <button onClick={clearChat} title="Clear" style={{ color:'rgba(255,255,255,0.75)',background:'none',border:'none',cursor:'pointer',padding:4,display:'flex' }}><RefreshCw size={15} /></button>
-            <button onClick={() => setIsOpen(false)} style={{ color:'rgba(255,255,255,0.75)',background:'none',border:'none',cursor:'pointer',padding:4,display:'flex' }}><X size={18} /></button>
+
+            {/* TOP-RIGHT CORNER: 🆘 Need Legal Help? Button */}
+            <button
+              id="need-legal-help-btn"
+              onClick={() => setShowLegalHelp(prev => !prev)}
+              title={showLegalHelp ? "Return to chat" : "Find verified legal support by location"}
+              style={{
+                background: showLegalHelp ? '#ffffff' : 'rgba(255,255,255,0.18)',
+                color: showLegalHelp ? '#4338ca' : '#ffffff',
+                border: showLegalHelp ? '1px solid #ffffff' : '1px solid rgba(255,255,255,0.35)',
+                borderRadius: 20,
+                padding: '0.28rem 0.6rem',
+                fontSize: '0.72rem',
+                fontWeight: 700,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.3rem',
+                flexShrink: 0,
+                transition: 'all 0.18s ease',
+                boxShadow: showLegalHelp ? '0 2px 8px rgba(0,0,0,0.15)' : 'none',
+              }}
+              onMouseEnter={(e) => {
+                if (!showLegalHelp) {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.28)';
+                  e.currentTarget.style.transform = 'translateY(-1px)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!showLegalHelp) {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.18)';
+                  e.currentTarget.style.transform = 'translateY(0)';
+                }
+              }}
+            >
+              <span>🆘</span>
+              <span>Need Legal Help?</span>
+            </button>
+
+            <button onClick={clearChat} title="Clear conversation" style={{ color:'rgba(255,255,255,0.8)',background:'none',border:'none',cursor:'pointer',padding:4,display:'flex' }}><RefreshCw size={15} /></button>
+            <button onClick={() => { setIsOpen(false); setShowLegalHelp(false); }} title="Close" style={{ color:'rgba(255,255,255,0.8)',background:'none',border:'none',cursor:'pointer',padding:4,display:'flex' }}><X size={18} /></button>
           </div>
 
-          {/* Emergency Strip */}
-          <div style={{ background:'rgba(239,68,68,0.05)',borderBottom:'1px solid rgba(239,68,68,0.1)',padding:'0.3rem 0.9rem',display:'flex',alignItems:'center',gap:'0.5rem',fontSize:'0.68rem',color:'#dc2626' }}>
-            <Phone size={11} />
-            <span><strong>Emergency:</strong> 112 &nbsp;|&nbsp; Cyber: 1930 &nbsp;|&nbsp; Legal Aid: 15100 &nbsp;|&nbsp; Women: 181</span>
-          </div>
+          {/* Main Body: Dedicated Legal Help Panel OR Regular LawBot Chat */}
+          {showLegalHelp ? (
+            <LegalHelpPanel onBackToChat={() => setShowLegalHelp(false)} />
+          ) : (
+            <>
+              {/* Emergency Strip */}
+              <div style={{ background:'rgba(239,68,68,0.05)',borderBottom:'1px solid rgba(239,68,68,0.1)',padding:'0.3rem 0.9rem',display:'flex',alignItems:'center',gap:'0.5rem',fontSize:'0.68rem',color:'#dc2626' }}>
+                <Phone size={11} />
+                <span><strong>Emergency:</strong> 112 &nbsp;|&nbsp; Cyber: 1930 &nbsp;|&nbsp; Legal Aid: 15100 &nbsp;|&nbsp; Women: 181</span>
+              </div>
 
           {/* Messages */}
           <div style={{ flex:1,overflowY:'auto',padding:'0.85rem',display:'flex',flexDirection:'column',gap:'0.7rem' }}>
@@ -356,6 +402,8 @@ export const FloatingChatBot = () => {
               {voiceSupported ? '🎤 Tap mic to speak · Enter to send · Not legal advice' : 'Enter to send · Educational only · Not legal advice'}
             </div>
           </div>
+            </>
+          )}
         </div>
       )}
     </>
